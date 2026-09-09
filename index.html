@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Klotski State Explorer</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="app">
+    <header>
+      <div>
+        <h1>Klotski State Explorer</h1>
+        <p>Enumerate every valid 4×5 board for a block setup and inspect its state-transition graph.</p>
+      </div>
+      <a class="repo" href="https://github.com/norill/Klotski" target="_blank" rel="noreferrer">GitHub</a>
+    </header>
+
+    <section class="controls card">
+      <label>
+        Board setup
+        <select id="setup"></select>
+      </label>
+      <button id="enumerate">Enumerate setup</button>
+      <label class="checkbox"><input id="showLabels" type="checkbox"> Show node labels</label>
+      <span id="status" class="status">Choose a setup.</span>
+    </section>
+
+    <section class="stats" id="stats"></section>
+
+    <section class="workspace">
+      <aside class="card inspector">
+        <h2>Selected state</h2>
+        <div id="board" class="board" aria-label="Selected Klotski board"></div>
+        <div id="stateInfo" class="state-info">Select a node in the graph.</div>
+        <div class="legend">
+          <div><i class="v"></i> vertical 1×2</div>
+          <div><i class="h"></i> horizontal 2×1</div>
+          <div><i class="q"></i> square 2×2</div>
+          <div><i class="s"></i> singlet 1×1</div>
+        </div>
+      </aside>
+
+      <section class="card graph-panel">
+        <div class="panel-head">
+          <div>
+            <h2>State graph</h2>
+            <p>Nodes are complete board states. An edge is one legal one-square move.</p>
+          </div>
+          <label>Component <select id="component"></select></label>
+        </div>
+        <div id="graphWrap" class="graph-wrap">
+          <canvas id="graph"></canvas>
+          <div id="graphEmpty" class="graph-empty">Enumerate a setup to build its graph.</div>
+        </div>
+      </section>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
