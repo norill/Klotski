@@ -36,13 +36,13 @@ function decode(key) {
 }
 function areaFor(v, h, s) { return 2 * v + 2 * h + 4 + s; }
 
-// Every valid setup has exactly one 2×2 block and fills 20 cells.
-// Thus s = 16 - 2(v+h), giving 39 feasible setups.
+// Every valid setup has exactly one 2×2 block and occupies 18 of the 20 cells,
+// leaving exactly two empty squares. Thus s = 14 - 2(v+h).
 function makeSetups() {
   const result = [];
-  for (let v = 0; v <= 8; v++) for (let h = 0; h <= 8 - v; h++) {
-    const s = 16 - 2 * (v + h);
-    if (s < 0 || areaFor(v, h, s) !== 20) continue;
+  for (let v = 0; v <= 7; v++) for (let h = 0; h <= 7 - v; h++) {
+    const s = 14 - 2 * (v + h);
+    if (s < 0 || areaFor(v, h, s) !== 18) continue;
     result.push({ v, h, q: 1, s });
   }
   return result;
@@ -61,32 +61,53 @@ function firstEmpty(mask) {
   return -1;
 }
 
-// Enumerate tilings directly, rather than starting from an initial arrangement.
-// At each step we cover the first empty cell, so each tiling is generated once.
+// Enumerate every placement of the requested blocks while leaving exactly two
+// cells empty. At each step we cover the first empty cell whenever possible;
+// the two final uncovered cells are the holes. This generates each board once.
 function enumerateTilings(counts) {
   const out = [];
   const parts = TYPES.map(() => []);
-  function rec(mask, remaining) {
-    if (mask === FULL) {
-      out.push(encode(parts));
+  const totalBlocks = counts.v + counts.h + counts.q + counts.s;
+
+  function rec(mask, remaining, blocksLeft) {
+    if (blocksLeft === 0) {
+      if (mask !== FULL && (W * H - popcount(mask)) === 2) out.push(encode(parts));
       return;
     }
-    const p = firstEmpty(mask), x = p % W, y = Math.floor(p / W);
+
+    const p = firstEmpty(mask);
+    if (p < 0) return;
+    const x = p % W, y = Math.floor(p / W);
+
     for (let ti = 0; ti < TYPES.length; ti++) {
       if (!remaining[ti]) continue;
       const t = TYPES[ti];
       if (x + t.w > W || y + t.h > H) continue;
       const m = maskFor(t, x, y);
       if (mask & m) continue;
+
       parts[ti].push([x, y]);
       remaining[ti]--;
-      rec(mask | m, remaining);
+      rec(mask | m, remaining, blocksLeft - 1);
       remaining[ti]++;
       parts[ti].pop();
     }
+
+    // The first empty cell may itself be one of the two holes. We only need to
+    // branch on this when enough cells remain to leave exactly two holes.
+    if (W * H - popcount(mask) > 2) {
+      rec(mask | bit(x, y), remaining, blocksLeft);
+    }
   }
-  rec(0, [counts.v, counts.h, counts.q, counts.s]);
+
+  rec(0, [counts.v, counts.h, counts.q, counts.s], totalBlocks);
   return out;
+}
+
+function popcount(n) {
+  let c = 0;
+  while (n) { n &= n - 1; c++; }
+  return c;
 }
 
 function neighbors(key) {
@@ -103,6 +124,9 @@ function neighbors(key) {
       const own = maskFor(t, x, y);
       for (const [dx, dy, dir] of DIRS) {
         const nx = x + dx, ny = y + dy;
+        // Check all four board boundaries using the entire block dimensions.
+        // In particular, nx+t.w and ny+t.h prevent the block's bottom/right
+        // edges from crossing the board.
         if (nx < 0 || ny < 0 || nx + t.w > W || ny + t.h > H) continue;
         const nm = maskFor(t, nx, ny);
         let legal = true;
@@ -151,7 +175,6 @@ function components(graph) {
 }
 
 function renderStats(graph, groups, counts) {
-  const degreeSum = graph.adjacency.reduce((a, n) => a + n.length, 0);
   const cards = [
     ['States', graph.states.length],
     ['Transitions', graph.edges.length],
@@ -180,17 +203,15 @@ function renderBoard(key) {
 
 let current = null;
 let selected = 0;
-let drag = null;
 
 function layoutGraph(graph, group) {
-  // A deterministic radial layout: BFS layers from the first state, with disconnected
-  // components handled separately. This avoids a heavyweight force-layout dependency.
   const nodes = group.map(i => i);
   const pos = new Map();
   const dist = new Map([[nodes[0], 0]]), q = [nodes[0]];
+  const groupSet = new Set(group);
   for (let p = 0; p < q.length; p++) {
     const n = q[p];
-    for (const m of graph.adjacency[n]) if (group.includes(m) && !dist.has(m)) { dist.set(m, dist.get(n) + 1); q.push(m); }
+    for (const m of graph.adjacency[n]) if (groupSet.has(m) && !dist.has(m)) { dist.set(m, dist.get(n) + 1); q.push(m); }
   }
   const layers = new Map();
   nodes.forEach(n => { const d = dist.get(n) ?? 0; if (!layers.has(d)) layers.set(d, []); layers.get(d).push(n); });
