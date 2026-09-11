@@ -5,7 +5,6 @@ const TYPES = [
   { key: 'q', name: 'square 2×2', w: 2, h: 2 },
   { key: 's', name: 'singlet 1×1', w: 1, h: 1 }
 ];
-const FULL = (1 << (W * H)) - 1;
 const DIRS = [[-1, 0, 'L'], [1, 0, 'R'], [0, -1, 'U'], [0, 1, 'D']];
 const cache = new Map();
 
@@ -52,7 +51,7 @@ const SETUPS = makeSetups();
 SETUPS.forEach((c, i) => {
   const option = document.createElement('option');
   option.value = i;
-  option.textContent = `V${c.v} · H${c.h} · Q1 · S${c.s}`;
+  option.textContent = `V${c.v} · H${c.h} · S${c.s}`;
   setupSelect.appendChild(option);
 });
 
@@ -71,7 +70,7 @@ function enumerateTilings(counts) {
 
   function rec(mask, remaining, blocksLeft) {
     if (blocksLeft === 0) {
-      if (mask !== FULL && (W * H - popcount(mask)) === 2) out.push(encode(parts));
+      if ((W * H - popcount(mask)) <= 2) out.push(encode(parts));      
       return;
     }
 
@@ -95,7 +94,7 @@ function enumerateTilings(counts) {
 
     // The first empty cell may itself be one of the two holes. We only need to
     // branch on this when enough cells remain to leave exactly two holes.
-    if (W * H - popcount(mask) > 2) {
+    if (W * H - popcount(mask) > 1) {
       rec(mask | bit(x, y), remaining, blocksLeft);
     }
   }
@@ -231,8 +230,8 @@ function layoutGraph(graph, group) {
 
 function drawGraph() {
   if (!current) return;
-  const canvas = graphCanvas, rect = canvas.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
-  canvas.width = rect.width * dpr; canvas.height = rect.height * dpr;
+  const canvas = graphCanvas, rect = canvas.getBoundingClientRect(), dpr =  1;
+  canvas.width = 1000; canvas.height = 650;
   const ctx = canvas.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, rect.width, rect.height);
   const group = current.groups[Number(componentSelect.value) || 0];
