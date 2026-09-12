@@ -10,7 +10,7 @@ const cache = new Map();
 
 const $ = id => document.getElementById(id);
 const setupSelect = $('setup');
-const componentSelect = $('component');
+const groupSelect = $('component');
 const status = $('status');
 const graphCanvas = $('graph');
 const boardEl = $('board');
@@ -24,12 +24,11 @@ function maskFor(t, x, y) {
   for (let dy = 0; dy < t.h; dy++) for (let dx = 0; dx < t.w; dx++) m |= bit(x + dx, y + dy);
   return m;
 }
-function keyOf(parts) { return parts.map(a => a.join(',')).join(';'); }
 function encode(state) {
   return state.map(part => part.map(([x, y]) => `${x + y * W}`).join(',')).join('|');
 }
 function decode(key) {
-  return key.split('|').map((part, ti) => part ? part.split(',').map(n => {
+  return key.split('|').map(part => part ? part.split(',').map(n => {
     const p = Number(n); return [p % W, Math.floor(p / W)];
   }) : []);
 }
@@ -59,6 +58,11 @@ function firstEmpty(mask) {
   for (let i = 0; i < W * H; i++) if (!(mask & (1 << i))) return i;
   return -1;
 }
+function popcount(n) {
+  let c = 0;
+  while (n) { n &= n - 1; c++; }
+  return c;
+}
 
 // Enumerate every placement of the requested blocks while leaving exactly two
 // cells empty. At each step we cover the first empty cell whenever possible;
@@ -70,7 +74,7 @@ function enumerateTilings(counts) {
 
   function rec(mask, remaining, blocksLeft) {
     if (blocksLeft === 0) {
-      if ((W * H - popcount(mask)) <= 2) out.push(encode(parts));      
+      if (W * H - popcount(mask) === 2) out.push(encode(parts));
       return;
     }
 
@@ -92,8 +96,8 @@ function enumerateTilings(counts) {
       parts[ti].pop();
     }
 
-    // The first empty cell may itself be one of the two holes. We only need to
-    // branch on this when enough cells remain to leave exactly two holes.
+    // The first empty cell may itself be one of the two holes. Only branch if
+    // enough cells remain to leave exactly two holes after all blocks are placed.
     if (W * H - popcount(mask) > 1) {
       rec(mask | bit(x, y), remaining, blocksLeft);
     }
@@ -101,12 +105,6 @@ function enumerateTilings(counts) {
 
   rec(0, [counts.v, counts.h, counts.q, counts.s], totalBlocks);
   return out;
-}
-
-function popcount(n) {
-  let c = 0;
-  while (n) { n &= n - 1; c++; }
-  return c;
 }
 
 function neighbors(key) {
@@ -123,9 +121,6 @@ function neighbors(key) {
       const own = maskFor(t, x, y);
       for (const [dx, dy, dir] of DIRS) {
         const nx = x + dx, ny = y + dy;
-        // Check all four board boundaries using the entire block dimensions.
-        // In particular, nx+t.w and ny+t.h prevent the block's bottom/right
-        // edges from crossing the board.
         if (nx < 0 || ny < 0 || nx + t.w > W || ny + t.h > H) continue;
         const nm = maskFor(t, nx, ny);
         let legal = true;
@@ -159,8 +154,38 @@ function buildGraph(counts) {
   return { states, index, edges, adjacency };
 }
 
-function components(graph) {
-  const seen = new Uint8Array(graph.states.length), groups = [];
+function isSolved(key) {
+  const state = decode(key);
+  const q = state[2]?.[0];
+  // Bottom-center means the 2×2 block occupies columns 1–2 and rows 3–4.
+  return !!q && q[0] === 1 && q[1] === 3;
+}
+
+// Multi-source BFS from every solved state gives the shortest distance to a
+// solved state. Unsolvable groups have no solved source, so their depths remain null.
+function computeDepths(graph) {
+  const depth = new Int32Array(graph.states.length);
+  depth.fill(-1);
+  const queue = [];
+  for (let i = 0; i < graph.states.length; i++) {
+    if (isSolved(graph.states[i])) {
+      depth[i] = 0;
+      queue.push(i);
+    }
+  }
+  for (let head = 0; head < queue.length; head++) {
+    const n = queue[head];
+    for (const m of graph.adjacency[n]) {
+      if (depth[m] !== -1) continue;
+      depth[m] = depth[n] + 1;
+      queue.push(m);
+    }
+  }
+  return depth;
+}
+
+function groups(graph) {
+  const seen = new Uint8Array(graph.states.length), result = [];
   for (let i = 0; i < graph.states.length; i++) if (!seen[i]) {
     const q = [i], group = [];
     seen[i] = 1;
@@ -168,16 +193,20 @@ function components(graph) {
       const n = q[p]; group.push(n);
       for (const m of graph.adjacency[n]) if (!seen[m]) { seen[m] = 1; q.push(m); }
     }
-    groups.push(group);
+    const solvedCount = group.reduce((n, state) => n + (graph.depth[state] === 0 ? 1 : 0), 0);
+    let type = 'solvable';
+    if (solvedCount === 0) type = 'unsolvable';
+    else if (solvedCount === group.length) type = 'trivial';
+    result.push({ states: group, solvedCount, type });
   }
-  return groups.sort((a, b) => b.length - a.length);
+  return result.sort((a, b) => b.states.length - a.states.length);
 }
 
-function renderStats(graph, groups, counts) {
+function renderStats(graph, groupList, counts) {
   const cards = [
     ['States', graph.states.length],
     ['Transitions', graph.edges.length],
-    ['Components', groups.length],
+    ['Groups', groupList.length],
     ['Setup', `V${counts.v} H${counts.h} Q${counts.q} S${counts.s}`]
   ];
   statsEl.innerHTML = cards.map(([a, b]) => `<div class="stat"><b>${b}</b><span>${a}</span></div>`).join('');
@@ -186,28 +215,43 @@ function renderStats(graph, groups, counts) {
 function renderBoard(key) {
   const state = decode(key);
   boardEl.innerHTML = '';
-  for (let i = 0; i < W * H; i++) boardEl.appendChild(Object.assign(document.createElement('div'), { className: 'cell' }));
+
+  // Keep the 4×5 board as a background grid, but render each block as one
+  // positioned rectangle so multi-cell blocks are visually continuous.
+  for (let i = 0; i < W * H; i++) {
+    const cell = document.createElement('div');
+    cell.className = 'board-cell';
+    boardEl.appendChild(cell);
+  }
+
   state.forEach((part, ti) => part.forEach(([x, y], pi) => {
     const t = TYPES[ti];
-    for (let dy = 0; dy < t.h; dy++) for (let dx = 0; dx < t.w; dx++) {
-      const cell = boardEl.children[(y + dy) * W + x + dx];
-      cell.className = `cell ${t.key}`;
-      cell.textContent = (t.key === 'q' ? 'Q' : t.key.toUpperCase()) + (part.length > 1 ? pi + 1 : '');
-    }
+    const block = document.createElement('div');
+    block.className = `block ${t.key}`;
+    block.style.left = `${x * 25}%`;
+    block.style.top = `${y * 20}%`;
+    block.style.width = `${t.w * 25}%`;
+    block.style.height = `${t.h * 20}%`;
+    block.textContent = (t.key === 'q' ? 'Q' : t.key.toUpperCase()) + (part.length > 1 ? pi + 1 : '');
+    boardEl.appendChild(block);
   }));
-  const q = state[2][0];
-  const solved = q && q[0] === 1 && q[1] === 3;
-  stateInfo.innerHTML = `<b>Square:</b> (${q?.[0] ?? '?'}, ${q?.[1] ?? '?'})<br><b>Goal:</b> ${solved ? '✓ reached' : 'not reached'}`;
+
+  const q = state[2]?.[0];
+  const solved = isSolved(key);
+  const depth = current?.graph ? current.graph.depth[current.graph.index.get(key)] : -1;
+  stateInfo.innerHTML = `<b>Square:</b> (${q?.[0] ?? '?'}, ${q?.[1] ?? '?'})<br>` +
+    `<b>Depth:</b> ${depth < 0 ? '∞ (unsolvable)' : depth}<br>` +
+    `<b>Goal:</b> ${solved ? '✓ reached' : 'not reached'}`;
 }
 
 let current = null;
 let selected = 0;
 
 function layoutGraph(graph, group) {
-  const nodes = group.map(i => i);
+  const nodes = group.states;
   const pos = new Map();
   const dist = new Map([[nodes[0], 0]]), q = [nodes[0]];
-  const groupSet = new Set(group);
+  const groupSet = new Set(nodes);
   for (let p = 0; p < q.length; p++) {
     const n = q[p];
     for (const m of graph.adjacency[n]) if (groupSet.has(m) && !dist.has(m)) { dist.set(m, dist.get(n) + 1); q.push(m); }
@@ -230,43 +274,54 @@ function layoutGraph(graph, group) {
 
 function drawGraph() {
   if (!current) return;
-  const canvas = graphCanvas, rect = canvas.getBoundingClientRect(), dpr =  1;
-  canvas.width = 1000; canvas.height = 650;
-  const ctx = canvas.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const canvas = graphCanvas, rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width; canvas.height = rect.height;
+  const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, rect.width, rect.height);
-  const group = current.groups[Number(componentSelect.value) || 0];
+  const group = current.groups[Number(groupSelect.value) || 0];
   const pos = layoutGraph(current.graph, group);
+
   ctx.lineWidth = 1;
   ctx.strokeStyle = '#c8d0d9';
   current.graph.edges.forEach(([a,b]) => {
     if (!pos.has(a) || !pos.has(b)) return;
     ctx.beginPath(); ctx.moveTo(pos.get(a).x, pos.get(a).y); ctx.lineTo(pos.get(b).x, pos.get(b).y); ctx.stroke();
   });
-  group.forEach(n => {
+
+  group.states.forEach(n => {
     const p = pos.get(n); const r = n === selected ? 7 : 4;
     ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
     ctx.fillStyle = n === selected ? '#0969da' : '#57606a'; ctx.fill();
-    if ($('showLabels').checked && group.length < 500) {
-      ctx.fillStyle = '#57606a'; ctx.font = '10px system-ui'; ctx.fillText(String(n), p.x + 6, p.y + 3);
+    if ($('showLabels').checked && group.states.length < 500) {
+      const d = current.graph.depth[n];
+      ctx.fillStyle = '#57606a'; ctx.font = '10px system-ui';
+      ctx.fillText(d < 0 ? '∞' : String(d), p.x + 6, p.y + 3);
     }
   });
   canvas._positions = pos;
 }
 
 function pickNode(e) {
-  if (!current || !canvasReady()) return;
+  if (!current || !graphCanvas._positions) return;
   const rect = graphCanvas.getBoundingClientRect();
   const x = e.clientX - rect.left, y = e.clientY - rect.top;
-  const group = current.groups[Number(componentSelect.value) || 0];
+  const group = current.groups[Number(groupSelect.value) || 0];
   let best = null, bd = 12;
-  group.forEach(n => { const p = graphCanvas._positions?.get(n); if (!p) return; const d = Math.hypot(p.x-x,p.y-y); if (d < bd) { bd=d; best=n; } });
+  group.states.forEach(n => {
+    const p = graphCanvas._positions.get(n); if (!p) return;
+    const d = Math.hypot(p.x-x,p.y-y);
+    if (d < bd) { bd=d; best=n; }
+  });
   if (best !== null) { selected = best; renderBoard(current.graph.states[selected]); drawGraph(); }
 }
-function canvasReady() { return graphCanvas._positions; }
 
 enumerateSetup();
 $('enumerate').addEventListener('click', enumerateSetup);
-componentSelect.addEventListener('change', () => { selected = current.groups[Number(componentSelect.value)][0]; renderBoard(current.graph.states[selected]); drawGraph(); });
+groupSelect.addEventListener('change', () => {
+  selected = current.groups[Number(groupSelect.value)].states[0];
+  renderBoard(current.graph.states[selected]);
+  drawGraph();
+});
 $('showLabels').addEventListener('change', drawGraph);
 graphCanvas.addEventListener('click', pickNode);
 window.addEventListener('resize', drawGraph);
@@ -278,12 +333,20 @@ function enumerateSetup() {
   graphEmpty.style.display = 'none';
   setTimeout(() => {
     try {
-      if (!cache.has(cacheKey)) cache.set(cacheKey, buildGraph(counts));
-      const graph = cache.get(cacheKey), groups = components(graph);
-      current = { graph, groups, counts };
-      componentSelect.innerHTML = groups.map((g, i) => `<option value="${i}">Component ${i + 1} · ${g.length} states</option>`).join('');
-      selected = groups[0][0];
-      renderStats(graph, groups, counts);
+      if (!cache.has(cacheKey)) {
+        const graph = buildGraph(counts);
+        graph.depth = computeDepths(graph);
+        cache.set(cacheKey, graph);
+      }
+      const graph = cache.get(cacheKey);
+      const groupList = groups(graph);
+      current = { graph, groups: groupList, counts };
+      groupSelect.innerHTML = groupList.map((g, i) => {
+        const label = g.type === 'trivial' ? 'trivial' : g.type === 'unsolvable' ? 'unsolvable' : 'solvable';
+        return `<option value="${i}">Group ${i + 1} · ${g.states.length} states · ${label}</option>`;
+      }).join('');
+      selected = groupList[0].states[0];
+      renderStats(graph, groupList, counts);
       renderBoard(graph.states[selected]);
       status.textContent = `${graph.states.length.toLocaleString()} states enumerated.`;
       drawGraph();
