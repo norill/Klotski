@@ -38,7 +38,7 @@ function areaFor(v, h, s) { return 2 * v + 2 * h + 4 + s; }
 // leaving exactly two empty squares. Thus s = 14 - 2(v+h).
 function makeSetups() {
   const result = [];
-  for (let v = 0; v <= 7; v++) for (let h = 0; h <= 7 - v; h++) {
+  for (let v = 0; v <= 6; v++) for (let h = 0; h <= 7 - v; h++) {
     const s = 14 - 2 * (v + h);
     if (s < 0 || areaFor(v, h, s) !== 18) continue;
     result.push({ v, h, q: 1, s });
@@ -74,7 +74,7 @@ function enumerateTilings(counts) {
 
   function rec(mask, remaining, blocksLeft) {
     if (blocksLeft === 0) {
-      if (W * H - popcount(mask) === 2) out.push(encode(parts));
+      out.push(encode(parts));
       return;
     }
 
@@ -216,14 +216,6 @@ function renderBoard(key) {
   const state = decode(key);
   boardEl.innerHTML = '';
 
-  // Keep the 4×5 board as a background grid, but render each block as one
-  // positioned rectangle so multi-cell blocks are visually continuous.
-  for (let i = 0; i < W * H; i++) {
-    const cell = document.createElement('div');
-    cell.className = 'board-cell';
-    boardEl.appendChild(cell);
-  }
-
   state.forEach((part, ti) => part.forEach(([x, y], pi) => {
     const t = TYPES[ti];
     const block = document.createElement('div');
@@ -275,7 +267,7 @@ function layoutGraph(graph, group) {
 function drawGraph() {
   if (!current) return;
   const canvas = graphCanvas, rect = canvas.getBoundingClientRect();
-  canvas.width = rect.width; canvas.height = rect.height;
+  canvas.width = 1000; canvas.height = 650;
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, rect.width, rect.height);
   const group = current.groups[Number(groupSelect.value) || 0];
