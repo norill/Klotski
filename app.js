@@ -225,35 +225,46 @@ function renderBoard(key) {
 
 function depthLabel(depth) { return depth < 0 ? '∞' : String(depth); }
 
-function depthColor(depth, maxDepth) {
-  if (depth < 0) return 'hsl(0 0% 45%)';
-  if (maxDepth <= 0) return 'hsl(120 70% 35%)';
-  const hue = 120 - 120 * (depth / maxDepth);
-  return `hsl(${hue} 70% 35%)`;
+function renderAdjacentSection(title, entries, className) {
+  if (!entries.length) return '';
+  return `<div class="adjacent-section ${className}">
+    <div class="adjacent-section-title">${title} <span>(${entries.length})</span></div>
+    <div class="adjacent-list">
+      ${entries.map(({ i, depth }) => `
+        <button class="adjacent-state" data-state="${i}">
+          <span>${i}</span><span>${depthLabel(depth)}</span>
+        </button>`).join('')}
+    </div>
+  </div>`;
 }
 
 function renderStateInfo() {
   const depth = current.graph.depth[selected];
   const neighborsOfState = current.graph.adjacency[selected]
-    .map(i => ({ i, depth: current.graph.depth[i] }))
-    .sort((a, b) => {
-      const da = a.depth < 0 ? Infinity : a.depth;
-      const db = b.depth < 0 ? Infinity : b.depth;
-      return da - db || a.i - b.i;
-    });
-  const maxDepth = Math.max(0, ...Array.from(current.graph.depth).filter(d => d >= 0));
+    .map(i => ({ i, depth: current.graph.depth[i] }));
+
+  const lower = depth < 0 ? [] : neighborsOfState
+    .filter(n => n.depth >= 0 && n.depth < depth)
+    .sort((a, b) => b.depth - a.depth || a.i - b.i);
+  const same = neighborsOfState
+    .filter(n => n.depth === depth)
+    .sort((a, b) => a.i - b.i);
+  const higher = depth < 0 ? [] : neighborsOfState
+    .filter(n => n.depth > depth)
+    .sort((a, b) => a.depth - b.depth || a.i - b.i);
+  const unreachable = neighborsOfState
+    .filter(n => n.depth < 0)
+    .sort((a, b) => a.i - b.i);
 
   stateInfo.innerHTML = `
     <div><b>State:</b> ${selected}</div>
     <div><b>Depth:</b> ${depthLabel(depth)}</div>
     <div><b>Goal:</b> ${isSolved(current.graph.states[selected]) ? '✓ reached' : 'not reached'}</div>
     <div class="adjacent-title"><b>Adjacent states</b> <span>(${neighborsOfState.length})</span></div>
-    <div class="adjacent-list">
-      ${neighborsOfState.length ? neighborsOfState.map(({ i, depth }) => `
-        <button class="adjacent-state" data-state="${i}" style="color:${depthColor(depth, maxDepth)}">
-          <span>${i}</span><span>${depthLabel(depth)}</span>
-        </button>`).join('') : '<span>None</span>'}
-    </div>`;
+    ${renderAdjacentSection('Lower depth', lower, 'lower')}
+    ${renderAdjacentSection('Same depth', same, 'same')}
+    ${renderAdjacentSection('Higher depth', higher, 'higher')}
+    ${renderAdjacentSection('Unsolvable', unreachable, 'unreachable')}`;
 
   stateInfo.querySelectorAll('.adjacent-state').forEach(btn => {
     btn.addEventListener('click', () => {
