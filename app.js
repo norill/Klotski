@@ -64,9 +64,6 @@ function popcount(n) {
   return c;
 }
 
-// Enumerate every placement of the requested blocks while leaving exactly two
-// cells empty. At each step we cover the first empty cell whenever possible;
-// the two final uncovered cells are the holes. This generates each board once.
 function enumerateTilings(counts) {
   const out = [];
   const parts = TYPES.map(() => []);
@@ -161,8 +158,6 @@ function isSolved(key) {
   return !!q && q[0] === 1 && q[1] === 3;
 }
 
-// Multi-source BFS from every solved state gives the shortest distance to a
-// solved state. Unsolvable groups have no solved source, so their depths remain null.
 function computeDepths(graph) {
   const depth = new Int32Array(graph.states.length);
   depth.fill(-1);
@@ -215,7 +210,6 @@ function renderStats(graph, groupList, counts) {
 function renderBoard(key) {
   const state = decode(key);
   boardEl.innerHTML = '';
-
   state.forEach((part, ti) => part.forEach(([x, y], pi) => {
     const t = TYPES[ti];
     const block = document.createElement('div');
@@ -227,13 +221,48 @@ function renderBoard(key) {
     block.textContent = (t.key === 'q' ? 'Q' : t.key.toUpperCase()) + (part.length > 1 ? pi + 1 : '');
     boardEl.appendChild(block);
   }));
+}
 
-  const q = state[2]?.[0];
-  const solved = isSolved(key);
-  const depth = current?.graph ? current.graph.depth[current.graph.index.get(key)] : -1;
-  stateInfo.innerHTML = `<b>Square:</b> (${q?.[0] ?? '?'}, ${q?.[1] ?? '?'})<br>` +
-    `<b>Depth:</b> ${depth < 0 ? '∞ (unsolvable)' : depth}<br>` +
-    `<b>Goal:</b> ${solved ? '✓ reached' : 'not reached'}`;
+function depthLabel(depth) { return depth < 0 ? '∞' : String(depth); }
+
+function depthColor(depth, maxDepth) {
+  if (depth < 0) return 'hsl(0 0% 45%)';
+  if (maxDepth <= 0) return 'hsl(120 70% 35%)';
+  const hue = 120 - 120 * (depth / maxDepth);
+  return `hsl(${hue} 70% 35%)`;
+}
+
+function renderStateInfo() {
+  const depth = current.graph.depth[selected];
+  const neighborsOfState = current.graph.adjacency[selected]
+    .map(i => ({ i, depth: current.graph.depth[i] }))
+    .sort((a, b) => {
+      const da = a.depth < 0 ? Infinity : a.depth;
+      const db = b.depth < 0 ? Infinity : b.depth;
+      return da - db || a.i - b.i;
+    });
+  const maxDepth = Math.max(0, ...Array.from(current.graph.depth).filter(d => d >= 0));
+
+  stateInfo.innerHTML = `
+    <div><b>State:</b> ${selected}</div>
+    <div><b>Depth:</b> ${depthLabel(depth)}</div>
+    <div><b>Goal:</b> ${isSolved(current.graph.states[selected]) ? '✓ reached' : 'not reached'}</div>
+    <div class="adjacent-title"><b>Adjacent states</b> <span>(${neighborsOfState.length})</span></div>
+    <div class="adjacent-list">
+      ${neighborsOfState.length ? neighborsOfState.map(({ i, depth }) => `
+        <button class="adjacent-state" data-state="${i}" style="color:${depthColor(depth, maxDepth)}">
+          <span>${i}</span><span>${depthLabel(depth)}</span>
+        </button>`).join('') : '<span>None</span>'}
+    </div>`;
+
+  stateInfo.querySelectorAll('.adjacent-state').forEach(btn => {
+    btn.addEventListener('click', () => {
+      selected = Number(btn.dataset.state);
+      renderBoard(current.graph.states[selected]);
+      renderStateInfo();
+      drawGraph();
+    });
+  });
 }
 
 let current = null;
@@ -304,7 +333,7 @@ function pickNode(e) {
     const d = Math.hypot(p.x-x,p.y-y);
     if (d < bd) { bd=d; best=n; }
   });
-  if (best !== null) { selected = best; renderBoard(current.graph.states[selected]); drawGraph(); }
+  if (best !== null) { selected = best; renderBoard(current.graph.states[selected]); renderStateInfo(); drawGraph(); }
 }
 
 enumerateSetup();
@@ -312,6 +341,7 @@ $('enumerate').addEventListener('click', enumerateSetup);
 groupSelect.addEventListener('change', () => {
   selected = current.groups[Number(groupSelect.value)].states[0];
   renderBoard(current.graph.states[selected]);
+  renderStateInfo();
   drawGraph();
 });
 $('showLabels').addEventListener('change', drawGraph);
@@ -340,6 +370,7 @@ function enumerateSetup() {
       selected = groupList[0].states[0];
       renderStats(graph, groupList, counts);
       renderBoard(graph.states[selected]);
+      renderStateInfo();
       status.textContent = `${graph.states.length.toLocaleString()} states enumerated.`;
       drawGraph();
     } catch (err) {
