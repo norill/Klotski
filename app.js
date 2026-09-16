@@ -1,9 +1,9 @@
 const W = 4, H = 5;
 const TYPES = [
-  { key: 'v', name: 'vertical 1×2', w: 1, h: 2 },
-  { key: 'h', name: 'horizontal 2×1', w: 2, h: 1 },
-  { key: 'q', name: 'square 2×2', w: 2, h: 2 },
-  { key: 's', name: 'singlet 1×1', w: 1, h: 1 }
+  { key: 'v', name: 'vertical 1×2', w: 1, h: 2, mask: 17 },
+  { key: 'h', name: 'horizontal 2×1', w: 2, h: 1, mask: 3 },
+  { key: 'q', name: 'square 2×2', w: 2, h: 2, mask: 51 },
+  { key: 's', name: 'singlet 1×1', w: 1, h: 1, mask: 1 }
 ];
 const DIRS = [[-1, 0, 'L'], [1, 0, 'R'], [0, -1, 'U'], [0, 1, 'D']];
 const cache = new Map();
@@ -20,9 +20,7 @@ const graphEmpty = $('graphEmpty');
 
 function bit(x, y) { return 1 << (y * W + x); }
 function maskFor(t, x, y) {
-  let m = 0;
-  for (let dy = 0; dy < t.h; dy++) for (let dx = 0; dx < t.w; dx++) m |= bit(x + dx, y + dy);
-  return m;
+  return t.mask << (y * W + x);
 }
 function encode(state) {
   return state.map(part => part.map(([x, y]) => `${x + y * W}`).join(',')).join('|');
@@ -54,14 +52,35 @@ SETUPS.forEach((c, i) => {
   setupSelect.appendChild(option);
 });
 
+const FIRSTEMPTY_LUT = function() {
+  let ret = new Int8Array(256);
+  for (let i = 0; i < 256; i++)
+    for (let j = 0; j < W * H; j++) 
+      if (!(i & (1 << j))) {
+        ret[i] = j;
+        break;
+      }
+  return ret;
+}();
 function firstEmpty(mask) {
-  for (let i = 0; i < W * H; i++) if (!(mask & (1 << i))) return i;
-  return -1;
+  if ((mask & 0xFFFF) == 0xFFFF)
+    return FIRSTEMPTY_LUT[mask >> 16] + 16;
+  else if ((mask & 0xFF) == 0xFF)
+    return FIRSTEMPTY_LUT[mask >> 8 & 0xFF] + 8;
+  else return FIRSTEMPTY_LUT[mask & 0xFF];
 }
+
+const POPCOUNT_LUT = function() {
+  let ret = new Int8Array(256);
+  for (let i = 0; i < 256; i++){
+    let c = 0, n = i;
+    while (n) { n &= n - 1; c++; }
+    ret[i] = c;
+  }
+  return ret;
+}();
 function popcount(n) {
-  let c = 0;
-  while (n) { n &= n - 1; c++; }
-  return c;
+  return POPCOUNT_LUT[n & 0xFF] + POPCOUNT_LUT[n >> 8 & 0xFF] + POPCOUNT_LUT[n >> 16 & 0xFF];
 }
 
 function enumerateTilings(counts) {
@@ -158,9 +177,10 @@ function isSolved(key) {
   return !!q && q[0] === 1 && q[1] === 3;
 }
 
+const UNREACHED = 1<<30;
 function computeDepths(graph) {
   const depth = new Int32Array(graph.states.length);
-  depth.fill(-1);
+  depth.fill(UNREACHED);
   const queue = [];
   for (let i = 0; i < graph.states.length; i++) {
     if (isSolved(graph.states[i])) {
@@ -168,12 +188,34 @@ function computeDepths(graph) {
       queue.push(i);
     }
   }
-  for (let head = 0; head < queue.length; head++) {
+  let head = 0;
+  for (; head < queue.length; head++) {
     const n = queue[head];
     for (const m of graph.adjacency[n]) {
-      if (depth[m] !== -1) continue;
+      if (depth[m] !== UNREACHED) continue;
       depth[m] = depth[n] + 1;
       queue.push(m);
+    }
+  }
+  for (let i = 0; i < graph.states.length; i++) {
+    if (depth[i] === 1) {
+      queue.push(i);
+    }
+    if (depth[i] === 0) {
+      depth[i] = UNREACHED+1;
+    }
+  }
+  for (; head < queue.length; head++) {
+    const n = queue[head];
+    for (const m of graph.adjacency[n]) {
+      if (depth[m] !== UNREACHED+1) continue;
+      depth[m] = depth[n] - 1;
+      queue.push(m);
+    }
+  }
+  for (let i = 0; i < graph.states.length; i++) {
+    if (depth[i] === UNREACHED+1) {
+      depth[i] = 0;
     }
   }
   return depth;
@@ -223,7 +265,7 @@ function renderBoard(key) {
   }));
 }
 
-function depthLabel(depth) { return depth < 0 ? '∞' : String(depth); }
+function depthLabel(depth) { return depth === UNREACHED ? '∞' : String(depth); }
 
 function renderAdjacentSection(title, entries, className) {
   if (!entries.length) return '';
@@ -232,7 +274,7 @@ function renderAdjacentSection(title, entries, className) {
     <div class="adjacent-list">
       ${entries.map(({ i, depth }) => `
         <button class="adjacent-state" data-state="${i}">
-          <span>${i}</span><span>${depthLabel(depth)}</span>
+          <span>State ${i}</span><span>Depth ${depthLabel(depth)}</span>
         </button>`).join('')}
     </div>
   </div>`;
@@ -243,18 +285,15 @@ function renderStateInfo() {
   const neighborsOfState = current.graph.adjacency[selected]
     .map(i => ({ i, depth: current.graph.depth[i] }));
 
-  const lower = depth < 0 ? [] : neighborsOfState
-    .filter(n => n.depth >= 0 && n.depth < depth)
+  const lower = neighborsOfState
+    .filter(n => n.depth < depth)
     .sort((a, b) => b.depth - a.depth || a.i - b.i);
   const same = neighborsOfState
     .filter(n => n.depth === depth)
     .sort((a, b) => a.i - b.i);
-  const higher = depth < 0 ? [] : neighborsOfState
+  const higher = neighborsOfState
     .filter(n => n.depth > depth)
     .sort((a, b) => a.depth - b.depth || a.i - b.i);
-  const unreachable = neighborsOfState
-    .filter(n => n.depth < 0)
-    .sort((a, b) => a.i - b.i);
 
   stateInfo.innerHTML = `
     <div><b>State:</b> ${selected}</div>
@@ -263,8 +302,7 @@ function renderStateInfo() {
     <div class="adjacent-title"><b>Adjacent states</b> <span>(${neighborsOfState.length})</span></div>
     ${renderAdjacentSection('Lower depth', lower, 'lower')}
     ${renderAdjacentSection('Same depth', same, 'same')}
-    ${renderAdjacentSection('Higher depth', higher, 'higher')}
-    ${renderAdjacentSection('Unsolvable', unreachable, 'unreachable')}`;
+    ${renderAdjacentSection('Higher depth', higher, 'higher')}`;
 
   stateInfo.querySelectorAll('.adjacent-state').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -327,7 +365,7 @@ function drawGraph() {
     if ($('showLabels').checked && group.states.length < 500) {
       const d = current.graph.depth[n];
       ctx.fillStyle = '#57606a'; ctx.font = '10px system-ui';
-      ctx.fillText(d < 0 ? '∞' : String(d), p.x + 6, p.y + 3);
+      ctx.fillText(d === UNREACHED ? '∞' : String(d), p.x + 6, p.y + 3);
     }
   });
   canvas._positions = pos;
