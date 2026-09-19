@@ -265,6 +265,235 @@ function renderBoard(key) {
   }));
 }
 
+
+let editorMode = false;
+let editorTool = 'q';
+let editorParts = TYPES.map(() => []);
+
+function editorBlockCount(ti) {
+  return editorParts[ti].length;
+}
+
+function editorBoardKey() {
+  return encode(editorParts);
+}
+
+function editorOccupancy() {
+  const occupancy = new Int8Array(W * H);
+  editorParts.forEach((part, ti) => part.forEach(([x, y]) => {
+    const t = TYPES[ti];
+    const m = maskFor(t, x, y);
+    for (let i = 0; i < W * H; i++) {
+      if (m & (1 << i)) occupancy[i] = ti + 1;
+    }
+  }));
+  return occupancy;
+}
+
+function editorCanPlace(ti, x, y) {
+  const t = TYPES[ti];
+  if (x < 0 || y < 0 || x + t.w > W || y + t.h > H) return false;
+  const occupancy = editorOccupancy();
+  const m = maskFor(t, x, y);
+  for (let i = 0; i < W * H; i++) {
+    if ((m & (1 << i)) && occupancy[i]) return false;
+  }
+  return true;
+}
+
+function editorRemoveAt(x, y) {
+  const occupancy = editorOccupancy();
+  const ti = occupancy[y * W + x] - 1;
+  if (ti < 0) return false;
+  const t = TYPES[ti];
+  const partIndex = editorParts[ti].findIndex(([px, py]) => px <= x && x < px + t.w && py <= y && y < py + t.h);
+  if (partIndex < 0) return false;
+  editorParts[ti].splice(partIndex, 1);
+  return true;
+}
+
+function editorValidate() {
+  const counts = {
+    v: editorParts[0].length,
+    h: editorParts[1].length,
+    q: editorParts[2].length,
+    s: editorParts[3].length
+  };
+  const occupied = 2 * counts.v + 2 * counts.h + 4 * counts.q + counts.s;
+  const valid = counts.q === 1 && occupied === 18;
+  return { valid, counts, occupied };
+}
+
+function editorSetupIndex(counts) {
+  return SETUPS.findIndex(s =>
+    s.v === counts.v &&
+    s.h === counts.h &&
+    s.q === counts.q &&
+    s.s === counts.s
+  );
+}
+
+function editorStatusText(validation) {
+  const { counts, occupied, valid } = validation;
+  if (valid) return 'Valid state · 2 empty cells';
+  return `Place blocks until the board has exactly 18 occupied cells and one 2×2 square (currently ${occupied}/18, Q=${counts.q}).`;
+}
+
+function renderEditor() {
+  boardEl.innerHTML = '';
+  editorParts.forEach((part, ti) => part.forEach(([x, y], pi) => {
+    const t = TYPES[ti];
+    const block = document.createElement('div');
+    block.className = `block ${t.key} editor-block`;
+    block.style.left = `${x * 25}%`;
+    block.style.top = `${y * 20}%`;
+    block.style.width = `${t.w * 25}%`;
+    block.style.height = `${t.h * 20}%`;
+    block.textContent = t.key === 'q' ? 'Q' : t.key.toUpperCase();
+    block.title = 'Click to remove';
+    block.addEventListener('click', e => {
+      e.stopPropagation();
+      editorParts[ti].splice(pi, 1);
+      renderEditor();
+    });
+    boardEl.appendChild(block);
+  }));
+
+  const validation = editorValidate();
+  const info = $('editorInfo');
+  if (info) info.textContent = editorStatusText(validation);
+
+  document.querySelectorAll('.editor-tool').forEach(btn => {
+    btn.classList.toggle('selected', btn.dataset.tool === editorTool);
+    const ti = TYPES.findIndex(t => t.key === btn.dataset.tool);
+    if (ti >= 0) {
+      btn.dataset.count = String(editorBlockCount(ti));
+      btn.textContent = `${TYPES[ti].name} (${editorBlockCount(ti)})`;
+    }
+  });
+
+  const apply = $('applyEditor');
+  if (apply) apply.disabled = !validation.valid;
+}
+
+function stopEditor() {
+  editorMode = false;
+  const editorPanel = $('editorPanel');
+  if (editorPanel) editorPanel.remove();
+  boardEl.onclick = null;
+  if (current) {
+    renderBoard(current.graph.states[selected]);
+    renderStateInfo();
+    drawGraph();
+  }
+}
+
+function applyEditorState() {
+  const validation = editorValidate();
+  if (!validation.valid) return;
+
+  const setupIndex = editorSetupIndex(validation.counts);
+  if (setupIndex < 0) {
+    $('editorInfo').textContent = 'This block combination is not a valid setup.';
+    return;
+  }
+
+  const counts = SETUPS[setupIndex];
+  const cacheKey = [counts.v, counts.h, counts.q, counts.s].join(',');
+  status.textContent = cache.has(cacheKey) ? 'Loading cached graph…' : 'Enumerating selected setup…';
+  setupSelect.value = String(setupIndex);
+
+  const finish = () => {
+    const graph = cache.get(cacheKey);
+    const key = editorBoardKey();
+    const stateId = graph.index.get(key);
+    if (stateId === undefined) {
+      $('editorInfo').textContent = 'That board is not a generated state.';
+      status.textContent = 'Editor board was not found in the state graph.';
+      return;
+    }
+
+    const groupList = groups(graph);
+    current = { graph, groups: groupList, counts };
+    groupSelect.innerHTML = groupList.map((g, i) => {
+      const label = g.type === 'trivial' ? 'trivial' : g.type === 'unsolvable' ? 'unsolvable' : 'solvable';
+      return `<option value="${i}">Group ${i + 1} · ${g.states.length} states · ${label}</option>`;
+    }).join('');
+
+    selected = stateId;
+    const groupIndex = groupList.findIndex(g => g.states.includes(stateId));
+    if (groupIndex >= 0) groupSelect.value = String(groupIndex);
+
+    renderStats(graph, groupList, counts);
+    renderBoard(graph.states[selected]);
+    renderStateInfo();
+    status.textContent = `Selected state ${selected}.`;
+    stopEditor();
+  };
+
+  if (!cache.has(cacheKey)) {
+    setTimeout(() => {
+      try {
+        const graph = buildGraph(counts);
+        graph.depth = computeDepths(graph);
+        cache.set(cacheKey, graph);
+        finish();
+      } catch (err) {
+        status.textContent = `Error: ${err.message}`;
+        console.error(err);
+      }
+    }, 20);
+  } else {
+    finish();
+  }
+}
+
+function startEditor() {
+  if (editorMode) return;
+  editorMode = true;
+  editorTool = 'q';
+  editorParts = TYPES.map(() => []);
+
+  const panel = document.createElement('div');
+  panel.id = 'editorPanel';
+  panel.className = 'editor-panel';
+  panel.innerHTML = `
+    <div class="editor-tools">
+      <b>Block</b>
+      ${TYPES.map(t => `<button type="button" class="editor-tool" data-tool="${t.key}">${t.name} (0)</button>`).join('')}
+    </div>
+    <div class="editor-actions">
+      <button type="button" id="applyEditor" disabled>Use this state</button>
+      <button type="button" id="cancelEditor">Cancel</button>
+    </div>
+    <div id="editorInfo" class="editor-info"></div>
+  `;
+  boardEl.parentElement.insertBefore(panel, boardEl);
+  
+  document.querySelectorAll('.editor-tool').forEach(btn => {
+    btn.addEventListener('click', () => {
+      editorTool = btn.dataset.tool;
+      renderEditor();
+    });
+  });
+  $('applyEditor').addEventListener('click', applyEditorState);
+  $('cancelEditor').addEventListener('click', stopEditor);
+
+  boardEl.onclick = e => {
+    if (e.target !== boardEl) return;
+    const rect = boardEl.getBoundingClientRect();
+    const x = Math.floor((e.clientX - rect.left) / (rect.width / W));
+    const y = Math.floor((e.clientY - rect.top) / (rect.height / H));
+    const ti = TYPES.findIndex(t => t.key === editorTool);
+    if (ti < 0 || !editorCanPlace(ti, x, y)) return;
+    editorParts[ti].push([x, y]);
+    editorParts[ti].sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]));
+    renderEditor();
+  };
+
+  renderEditor();
+}
+
 function depthLabel(depth) { return depth === UNREACHED ? '∞' : String(depth); }
 
 function renderAdjacentSection(title, entries, className) {
@@ -384,6 +613,12 @@ function pickNode(e) {
   });
   if (best !== null) { selected = best; renderBoard(current.graph.states[selected]); renderStateInfo(); drawGraph(); }
 }
+
+const editButton = document.createElement('button');
+editButton.id = 'editBoard';
+editButton.textContent = 'Edit board';
+editButton.addEventListener('click', startEditor);
+$('enumerate').parentElement.insertBefore(editButton, $('enumerate'));
 
 enumerateSetup();
 $('enumerate').addEventListener('click', enumerateSetup);
