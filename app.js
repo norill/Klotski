@@ -450,6 +450,27 @@ function applyEditorState() {
 
 function startEditor() {
   if (editorMode) return;
+
+  if (!$('editorStyle')) {
+    const style = document.createElement('style');
+    style.id = 'editorStyle';
+    style.textContent = `
+      .editor-panel { margin: 0 0 10px; font-size: 12px; }
+      .editor-tools { display: flex; flex-direction: column; gap: 5px; }
+      .editor-tools b { margin-bottom: 2px; }
+      .editor-tool { padding: 5px 7px; background: white; color: #17202a; border-color: #c8d0d9; text-align: left; }
+      .editor-tool.selected { background: #0969da; color: white; border-color: #0969da; }
+      .editor-actions { display: flex; gap: 6px; margin-top: 10px; }
+      .editor-actions button { flex: 1; padding: 6px 8px; }
+      .editor-actions button:disabled { opacity: .5; cursor: not-allowed; }
+      .editor-info { margin-top: 8px; color: #57606a; line-height: 1.4; }
+      .editor-block { cursor: pointer; }
+      .editor-block:hover { filter: brightness(.9); }
+    `;
+    document.head.appendChild(style);
+  }
+
+  editorMode = true;
   editorMode = true;
   editorTool = 'q';
   editorParts = TYPES.map(() => []);
