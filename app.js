@@ -599,6 +599,7 @@ function drawGraph() {
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, rect.width, rect.height);
   const group = current.groups[Number(groupSelect.value) || 0];
+  if (group.states.length > 2000) return;
   const pos = layoutGraph(current.graph, group);
 
   ctx.lineWidth = 1;
