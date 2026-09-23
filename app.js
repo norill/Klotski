@@ -123,9 +123,22 @@ function enumerateTilings(counts) {
   return out;
 }
 
+function occupancyOf(parts) {
+  const out = new Int8Array(W * H);
+  parts.forEach((part, ti) => part.forEach(([x, y]) => {
+    const t = TYPES[ti];
+    const m = maskFor(t, x, y);
+    for (let i = 0; i < W * H; i++) {
+      if (m & (1 << i)) 
+        out[i] = ti + 1;
+    }
+  }));
+  return out;
+}
+
 function neighbors(key) {
   const state = decode(key);
-  const occupancy = new Int8Array(W * H);
+  const occupancy = occupancyOf(state);
   state.forEach((part, ti) => part.forEach(([x, y]) => {
     const t = TYPES[ti], m = maskFor(t, x, y);
     for (let i = 0; i < W * H; i++) if (m & (1 << i)) occupancy[i] = ti + 1;
@@ -265,7 +278,6 @@ function renderBoard(key) {
   }));
 }
 
-
 let editorMode = false;
 let editorTool = 'q';
 let editorParts = TYPES.map(() => []);
@@ -278,22 +290,11 @@ function editorBoardKey() {
   return encode(editorParts);
 }
 
-function editorOccupancy() {
-  const occupancy = new Int8Array(W * H);
-  editorParts.forEach((part, ti) => part.forEach(([x, y]) => {
-    const t = TYPES[ti];
-    const m = maskFor(t, x, y);
-    for (let i = 0; i < W * H; i++) {
-      if (m & (1 << i)) occupancy[i] = ti + 1;
-    }
-  }));
-  return occupancy;
-}
-
 function editorCanPlace(ti, x, y) {
   const t = TYPES[ti];
   if (x < 0 || y < 0 || x + t.w > W || y + t.h > H) return false;
-  const occupancy = editorOccupancy();
+  if (ti === 2 && editorParts[2].length > 0 ) return false;
+  const occupancy = occupancyOf(editorParts);
   const m = maskFor(t, x, y);
   for (let i = 0; i < W * H; i++) {
     if ((m & (1 << i)) && occupancy[i]) return false;
@@ -302,7 +303,7 @@ function editorCanPlace(ti, x, y) {
 }
 
 function editorRemoveAt(x, y) {
-  const occupancy = editorOccupancy();
+  const occupancy = occupancyOf(editorParts);
   const ti = occupancy[y * W + x] - 1;
   if (ti < 0) return false;
   const t = TYPES[ti];
@@ -336,7 +337,7 @@ function editorSetupIndex(counts) {
 function editorStatusText(validation) {
   const { counts, occupied, valid } = validation;
   if (valid) return 'Valid state · 2 empty cells';
-  return `Place blocks until the board has exactly 18 occupied cells and one 2×2 square (currently ${occupied}/18, Q=${counts.q}).`;
+  return `Place blocks until the board has exactly 18 occupied cells and one 2×2 square (currently ${occupied}/18, square: ${counts.q}).`;
 }
 
 function renderEditor() {
@@ -451,26 +452,6 @@ function applyEditorState() {
 function startEditor() {
   if (editorMode) return;
 
-  if (!$('editorStyle')) {
-    const style = document.createElement('style');
-    style.id = 'editorStyle';
-    style.textContent = `
-      .editor-panel { margin: 0 0 10px; font-size: 12px; }
-      .editor-tools { display: flex; flex-direction: column; gap: 5px; }
-      .editor-tools b { margin-bottom: 2px; }
-      .editor-tool { padding: 5px 7px; background: white; color: #17202a; border-color: #c8d0d9; text-align: left; }
-      .editor-tool.selected { background: #0969da; color: white; border-color: #0969da; }
-      .editor-actions { display: flex; gap: 6px; margin-top: 10px; }
-      .editor-actions button { flex: 1; padding: 6px 8px; }
-      .editor-actions button:disabled { opacity: .5; cursor: not-allowed; }
-      .editor-info { margin-top: 8px; color: #57606a; line-height: 1.4; }
-      .editor-block { cursor: pointer; }
-      .editor-block:hover { filter: brightness(.9); }
-    `;
-    document.head.appendChild(style);
-  }
-
-  editorMode = true;
   editorMode = true;
   editorTool = 'q';
   editorParts = TYPES.map(() => []);
@@ -481,7 +462,7 @@ function startEditor() {
   panel.innerHTML = `
     <div class="editor-tools">
       <b>Block</b>
-      ${TYPES.map(t => `<button type="button" class="editor-tool" data-tool="${t.key}">${t.name} (0)</button>`).join('')}
+      ${TYPES.map(t => `<button type="button" class="editor-tool ${t.key}" data-tool="${t.key}">${t.name} (0)</button>`).join('')}
     </div>
     <div class="editor-actions">
       <button type="button" id="applyEditor" disabled>Use this state</button>
